@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Camera + Location Capture</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;max-width:720px;margin:20px auto;padding:16px}
+    h1{font-size:1.25rem;margin-bottom:0.5rem}
+    p.small{color:#444;font-size:0.9rem}
+    video, img{display:block;width:100%;max-width:420px;border-radius:8px;background:#000}
+    .controls{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+    button{padding:8px 12px;border-radius:8px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer}
+    #output{margin-top:12px}
+    .coord{font-family:monospace;background:#f7f7f7;padding:8px;border-radius:6px}
+    .hidden{display:none}
+  </style>
+</head>
+<body>
+  <h1>Camera + Location Capture</h1>
+  <p class="small">This page requests access to your <strong>front camera</strong> and <strong>location</strong>. Press <em>Start</em>, allow permissions, then press <em>Capture</em>.</p>
+
+  <div class="controls">
+    <button id="startBtn">Start Camera</button>
+    <button id="captureBtn" disabled>Capture Photo & Location</button>
+    <button id="stopBtn" disabled>Stop Camera</button>
+    <a id="downloadImg" class="hidden" download="photo.png">Download Photo</a>
+  </div>
+
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas" class="hidden"></canvas>
+
+  <div id="output">
+    <h2 style="font-size:1rem;margin:8px 0">Result</h2>
+    <img id="photo" alt="Captured photo" class="hidden" />
+    <div id="coords" class="coord hidden"></div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const captureBtn = document.getElementById('captureBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const photo = document.getElementById('photo');
+    const coordsDiv = document.getElementById('coords');
+    const downloadImg = document.getElementById('downloadImg');
+
+    let stream = null;
+
+    async function startCamera(){
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode: 'user' }, audio: false });
+        video.srcObject = stream;
+        captureBtn.disabled = false;
+        stopBtn.disabled = false;
+        startBtn.disabled = true;
+      }catch(err){
+        alert('Could not start camera: ' + (err.message || err));
+      }
+    }
+
+    function stopCamera(){
+      if(!stream) return;
+      stream.getTracks().forEach(t=>t.stop());
+      video.srcObject = null;
+      stream = null;
+      captureBtn.disabled = true;
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+    }
+
+    function takePhoto(){
+      if(!stream){ alert('Camera not started'); return; }
+      const vWidth = video.videoWidth || 640;
+      const vHeight = video.videoHeight || 480;
+      const size = Math.min(vWidth, vHeight);
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      // draw centered square from the video
+      const sx = (vWidth - size) / 2;
+      const sy = (vHeight - size) / 2;
+      ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
+      const dataUrl = canvas.toDataURL('image/png');
+      photo.src = dataUrl;
+      photo.classList.remove('hidden');
+      downloadImg.href = dataUrl;
+      downloadImg.classList.remove('hidden');
+      downloadImg.textContent = 'Download Photo (png)';
+    }
+
+    function getLocation(){
+      return new Promise((resolve,reject)=>{
+        if(!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+        navigator.geolocation.getCurrentPosition(pos=>resolve(pos), err=>reject(err), { enableHighAccuracy: true, timeout: 10000 });
+      });
+    }
+
+    async function captureAll(){
+      try{
+        takePhoto();
+        coordsDiv.classList.add('hidden');
+        coordsDiv.textContent = 'Getting location...';
+        coordsDiv.classList.remove('hidden');
+        const pos = await getLocation();
+        const lat = pos.coords.latitude.toFixed(7);
+        const lon = pos.coords.longitude.toFixed(7);
+        const alt = pos.coords.altitude === null ? 'n/a' : pos.coords.altitude;
+        const acc = pos.coords.accuracy;
+        coordsDiv.innerHTML = `Latitude: ${lat}\nLongitude: ${lon}\nAccuracy: ±${acc} meters\nAltitude: ${alt}`.replace(/\n/g,'<br>');
+
+        // Optional: create a JSON blob for easy upload
+        const payload = {
+          capturedAt: new Date().toISOString(),
+          coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, altitude: pos.coords.altitude },
+          imageMime: 'image/png'
+        };
+        // create download link for metadata
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        // remove previous if exists
+        let metaLink = document.getElementById('downloadMeta');
+        if(metaLink) metaLink.remove();
+        metaLink = document.createElement('a');
+        metaLink.id = 'downloadMeta';
+        metaLink.href = url;
+        metaLink.download = 'photo-metadata.json';
+        metaLink.textContent = 'Download Metadata (JSON)';
+        metaLink.style.marginLeft = '8px';
+        downloadImg.insertAdjacentElement('afterend', metaLink);
+
+      }catch(err){
+        coordsDiv.classList.remove('hidden');
+        coordsDiv.textContent = 'Could not get location: ' + (err.message || err);
+      }
+    }
+
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    captureBtn.addEventListener('click', captureAll);
+
+    // Auto-stop camera when leaving page
+    window.addEventListener('pagehide', stopCamera);
+  </script>
+</body>
+</html>
